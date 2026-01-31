@@ -1,17 +1,19 @@
-# Atlas Backend Template
+# CITADEL — High-Performance RAG Pipeline
 
-FastAPI backend template with async SQLAlchemy, PostgreSQL vector search (pgvector),
-and background task processing for AI embeddings.
+Modular Retrieval-Augmented Generation backend built on FastAPI, PostgreSQL with
+pgvector, and async-first Python. CITADEL handles the full document lifecycle:
+ingestion, chunking, embedding, and semantic retrieval.
 
 ## Tech Stack
 
 - **Framework**: FastAPI 0.109+ with Pydantic v2
 - **Database**: PostgreSQL 16 with pgvector extension
 - **ORM**: SQLAlchemy 2.0 (async) + Alembic migrations
-- **Cache**: Redis (prepared, not yet implemented)
-- **AI**: OpenAI embeddings (text-embedding-3-small) with mock mode for development
+- **Ingestion**: PyMuPDF (PDF), standard lib (Markdown)
+- **Embeddings**: OpenAI text-embedding-3-small (mock mode for dev)
+- **Cache**: Redis (prepared, not yet active)
 - **Testing**: pytest + pytest-asyncio + httpx
-- **Code Quality**: Ruff (linter/formatter) + mypy + pre-commit
+- **Code Quality**: Ruff (linter/formatter) + mypy (strict) + pre-commit
 
 ## Quickstart
 
@@ -20,7 +22,7 @@ and background task processing for AI embeddings.
 ```bash
 # 1. Clone and configure
 cp .env.example .env
-# Edit .env if needed (OPENAI_API_KEY optional - mock mode works without it)
+# Edit .env (OPENAI_API_KEY optional — mock mode works without it)
 
 # 2. Install dependencies
 make install
@@ -35,6 +37,27 @@ make mig-up
 # 5. Verify setup
 curl http://localhost:8000/health
 ```
+
+## Architecture
+
+```
+┌──────────┐    ┌───────────────┐    ┌──────────┐    ┌──────────┐
+│  Upload  │───▶│ FileProcessor │───▶│ Chunker  │───▶│ Embedder │
+│  (API)   │    │  (Ingestion)  │    │ (planned)│    │ (OpenAI) │
+└──────────┘    └───────────────┘    └──────────┘    └──────────┘
+                       │                                    │
+                       ▼                                    ▼
+                ┌─────────────┐                    ┌──────────────┐
+                │  SHA-256    │                    │   pgvector   │
+                │  Dedup Gate │                    │   Storage    │
+                └─────────────┘                    └──────────────┘
+```
+
+**Ingestion pipeline** (this release):
+1. Accept PDF or Markdown files via API or direct path.
+2. Compute SHA-256 hash for idempotent processing — skip duplicates.
+3. Extract text content (PyMuPDF for PDFs, UTF-8 decode for Markdown).
+4. Return a structured `Document` with metadata (filename, size, page count).
 
 ## Development Commands
 
@@ -67,6 +90,43 @@ Environment variables are loaded from `.env`. See `.env.example` for all options
 | `OPENAI_API_KEY` | No | OpenAI API key (leave empty or set to `mock` for dev) |
 | `LOG_LEVEL` | No | Logging level (default: `INFO`) |
 
+## API Endpoints
+
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| `GET` | `/health` | Health check |
+| `POST` | `/api/v1/notes/` | Create note (triggers async embedding) |
+| `GET` | `/api/v1/notes/` | List notes |
+| `GET` | `/api/v1/notes/{id}` | Get note by ID |
+| `POST` | `/api/v1/notes/search` | Semantic search |
+
+## Project Structure
+
+```
+app/
+├── models/
+│   └── schemas.py        # Document, Chunk, DocumentMetadata (Pydantic)
+├── services/
+│   └── ingestion.py      # FileProcessor — PDF & Markdown extraction
+src/atlas_template/
+├── api/v1/               # Route handlers
+├── core/                 # Config, database, logging
+├── models/               # SQLAlchemy ORM models
+├── repositories/         # Data access layer
+├── schemas/              # Pydantic request/response models
+├── services/             # Business logic (AI, embeddings)
+tests/
+├── test_ingestion.py     # Ingestion unit tests
+├── unit/                 # Unit tests (mocked dependencies)
+├── integration/          # Live tests (require Docker)
+migrations/               # Alembic migration files
+scripts/                  # Utility scripts
+```
+
+> **Note**: `app/` contains the new CITADEL ingestion layer. The existing
+> `src/atlas_template/` code (notes API, vector search) will be migrated
+> into `app/` in an upcoming session.
+
 ## Code Quality
 
 Pre-commit hooks run automatically on commit:
@@ -78,58 +138,26 @@ pre-commit run --all  # Manual run
 
 Quality tools:
 - **Ruff**: Linting and formatting (replaces flake8, isort, black)
-- **mypy**: Static type checking
+- **mypy**: Static type checking (strict mode for `app/`)
 - **pytest**: Unit and integration tests with coverage
-
-## API Endpoints
-
-| Method | Endpoint | Description |
-|--------|----------|-------------|
-| `GET` | `/health` | Health check |
-| `POST` | `/api/v1/notes/` | Create note (triggers async embedding) |
-| `GET` | `/api/v1/notes/` | List notes |
-| `GET` | `/api/v1/notes/{id}` | Get note by ID |
-| `POST` | `/api/v1/notes/search` | Semantic search |
 
 ## Troubleshooting
 
 **Database connection refused**
 ```bash
-# Ensure Docker is running and database is healthy
 docker compose ps
 docker compose logs db
 ```
 
 **Migrations out of sync**
 ```bash
-# Reset and re-apply migrations (dev only - destroys data)
 make down
-docker volume rm atlas-backend-template_postgres_data
-make up
-make mig-up
+docker volume rm citadel-rag_postgres_data
+make up && make mig-up
 ```
 
 **API health check fails**
 ```bash
-# Check API logs for startup errors
 make logs-api
-# Verify database is accessible
 make db-shell
-```
-
-## Project Structure
-
-```
-src/atlas_template/
-    api/v1/          # Route handlers
-    core/            # Config, database, logging
-    models/          # SQLAlchemy ORM models
-    repositories/    # Data access layer
-    schemas/         # Pydantic request/response models
-    services/        # Business logic (AI, embeddings)
-tests/
-    unit/            # Unit tests (mocked dependencies)
-    integration/     # Live tests (require Docker)
-migrations/          # Alembic migration files
-scripts/             # Utility scripts (backfill, etc.)
 ```
