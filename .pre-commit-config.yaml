@@ -1,0 +1,34 @@
+# ==============================================================================
+# Pre-commit Hooks Configuration
+# Runs automatically on git commit to enforce code quality standards
+# Install: pre-commit install
+# ==============================================================================
+
+repos:
+  # Standard file hygiene checks
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v4.5.0
+    hooks:
+      - id: trailing-whitespace
+      - id: end-of-file-fixer
+      - id: check-yaml
+      - id: check-added-large-files
+
+  # Ruff: Fast Python linter and formatter (replaces flake8, isort, black)
+  - repo: https://github.com/astral-sh/ruff-pre-commit
+    rev: v0.3.4
+    hooks:
+      - id: ruff
+        args: [ --fix ]  # Auto-fix safe issues
+      - id: ruff-format
+
+  # Type checking with mypy (uses local installation for consistent config)
+  - repo: local
+    hooks:
+      - id: mypy
+        name: mypy
+        entry: mypy
+        language: system
+        types: [python]
+        require_serial: true  # Run sequentially for accurate cross-file analysis
+        exclude: ^migrations/  # Alembic auto-generated files

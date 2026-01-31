@@ -1,0 +1,135 @@
+name: CI Pipeline
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: "pip"
+
+      # 1. Install & Cache (Utilisation du Makefile)
+      - name: Install dependencies
+        run: |
+          pip install --upgrade pip
+          make install
+          pip install pre-commit  # Nécessaire pour le check pre-commit
+
+      # 2. Quality Gate (Fail Fast)
+      - name: Quality Gates (Lint & Format)
+        run: |
+          # Vérifie que les hooks pre-commit passeraient (double sécurité)
+          pre-commit run --all-files
+          # Lance tes checks standards
+          make lint
+
+      # 3. Environment Setup
+      - name: Create .env for CI
+        run: |
+          cat <<'EOF' > .env
+          PROJECT_NAME="Atlas CI"
+          POSTGRES_USER=atlas
+          POSTGRES_PASSWORD=atlas_password
+          POSTGRES_DB=atlas_db
+          POSTGRES_HOST=db
+          POSTGRES_PORT=5432
+          REDIS_HOST=redis
+          REDIS_PORT=6379
+          OPENAI_API_KEY="mock"
+          LOG_LEVEL="DEBUG"
+          EOF
+
+      # 4. Infrastructure Up
+      - name: Start Docker Stack
+        run: |
+          docker compose up -d --build
+          docker compose ps
+
+      # 5. Wait Strategy (Postgres)
+      - name: Wait for Postgres readiness
+        run: |
+          echo "Waiting for Postgres..."
+          for i in {1..30}; do
+            if docker compose exec -T db pg_isready -U atlas -d atlas_db >/dev/null 2>&1; then
+              echo "Postgres ready"
+              exit 0
+            fi
+            echo "Waiting for Postgres... ($i/30)"
+            sleep 2
+          done
+          echo "Postgres not ready in time"
+          docker compose logs db --tail=200
+          exit 1
+
+      # 6. Migrations (Host Runner -> Container DB)
+      - name: Run Alembic migrations
+        env:
+          POSTGRES_USER: atlas
+          POSTGRES_PASSWORD: atlas_password
+          POSTGRES_DB: atlas_db
+          POSTGRES_PORT: "5432"
+          POSTGRES_HOST: "localhost"
+        run: |
+          echo "Running alembic upgrade head..."
+          for i in {1..5}; do
+            if alembic upgrade head; then
+              echo "Alembic migrations applied"
+              exit 0
+            fi
+            echo "Alembic failed, retrying... ($i/5)"
+            sleep 3
+          done
+          echo "Alembic failed after retries"
+          exit 1
+
+      # 7. Wait Strategy (API)
+      - name: Wait for API health
+        run: |
+          echo "Waiting for API /health..."
+          for i in {1..30}; do
+            if curl -fsS http://localhost:8000/health | grep -q '"ok"'; then
+              echo "API is healthy"
+              exit 0
+            fi
+            echo "Waiting for API... ($i/30)"
+            sleep 2
+          done
+          echo "API not healthy in time"
+          docker compose logs api --tail=200
+          exit 1
+
+      # 8. Tests
+      - name: Run Tests
+        env:
+          # Assure que le code de test voit aussi la clé mock
+          OPENAI_API_KEY: mock
+        run: |
+          make test
+
+      # 9. Debugging Logs (Only on failure)
+      - name: Dump logs on failure
+        if: failure()
+        run: |
+          echo "=== docker compose ps ==="
+          docker compose ps
+          echo "=== api logs ==="
+          docker compose logs api --tail=200
+          echo "=== db logs ==="
+          docker compose logs db --tail=200
+
+      # 10. Cleanup
+      - name: Stop Docker Stack
+        if: always()
+        run: |
+          docker compose down -v
