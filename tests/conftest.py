@@ -5,11 +5,39 @@ Shared fixtures for integration tests requiring a running Docker stack.
 Session-scoped fixtures ensure API readiness before test execution.
 """
 
-import time
-from collections.abc import Generator
+import os
 
-import httpx
-import pytest
+from dotenv import load_dotenv
+
+# ---------------------------------------------------------------------------
+# Test environment defaults — MUST be before any atlas_template imports.
+#
+# 1. Load .env first so that Docker-matching credentials are available.
+#    This mirrors what docker-compose does when reading the .env file.
+# 2. setdefault fills in anything still missing (CI runners, fresh clones
+#    without a .env file) so that pydantic Settings validation doesn't crash.
+# ---------------------------------------------------------------------------
+load_dotenv()  # .env → os.environ (no-op if file is missing)
+
+_test_env = {
+    "POSTGRES_USER": "atlas",
+    "POSTGRES_PASSWORD": "atlas_password",
+    "POSTGRES_HOST": "localhost",
+    "POSTGRES_PORT": "5432",
+    "POSTGRES_DB": "atlas_db",
+    "OPENAI_API_KEY": "mock",
+}
+for _key, _value in _test_env.items():
+    os.environ.setdefault(_key, _value)
+
+# ---------------------------------------------------------------------------
+# Imports (safe now that env vars are set)
+# ---------------------------------------------------------------------------
+import time  # noqa: E402
+from collections.abc import Generator  # noqa: E402
+
+import httpx  # noqa: E402
+import pytest  # noqa: E402
 
 BASE_URL = "http://localhost:8000"
 

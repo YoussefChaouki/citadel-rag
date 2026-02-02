@@ -63,6 +63,12 @@ async def test_create_note_triggers_embedding(wait_for_api):
     # asyncpg requires standard postgresql:// scheme (not SQLAlchemy's +asyncpg)
     dsn = dsn.replace("postgresql+asyncpg://", "postgresql://")
 
+    # --- FIX: PATCH RÉSEAU ---
+    # Si le test tourne sur le Mac, il ne peut pas résoudre "db" ou "citadel-db".
+    # On force le passage par localhost.
+    dsn = dsn.replace("@db:", "@localhost:").replace("@citadel-db:", "@localhost:")
+    # -------------------------
+
     found = False
     conn = None
 

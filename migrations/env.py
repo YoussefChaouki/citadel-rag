@@ -15,6 +15,7 @@ from sqlalchemy.ext.asyncio import async_engine_from_config
 sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 
 # Import all models to register them with Base.metadata
+import app.models.orm  # noqa: F401  — CITADEL RAG tables
 import atlas_template.models  # noqa: F401
 from atlas_template.core.config import settings
 from atlas_template.models.base import Base

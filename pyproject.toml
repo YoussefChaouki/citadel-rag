@@ -1,5 +1,5 @@
 # ==============================================================================
-# Atlas Backend - Project Configuration
+# CITADEL RAG Pipeline - Project Configuration
 # Python packaging, linting, type checking, and test configuration
 # ==============================================================================
 
@@ -21,6 +21,8 @@ dependencies = [
     "openai>=1.0.0",
     "pgvector>=0.2.0",
     "pymupdf>=1.24.0",
+    "langchain-text-splitters>=0.2.0",
+    "sentence-transformers>=3.0.0",
 ]
 
 [project.optional-dependencies]
@@ -47,14 +49,14 @@ packages = ["src/atlas_template"]
 [tool.ruff]
 target-version = "py311"
 line-length = 88
-src = ["src"]
+src = ["src", "."]
 
 [tool.ruff.lint]
 select = ["E", "W", "F", "I", "B", "UP"]  # Errors, Warnings, pyFlakes, Isort, Bugbear, pyUpgrade
 ignore = ["E501"]  # Line length handled by formatter
 
 [tool.ruff.lint.isort]
-known-first-party = ["atlas_template"]
+known-first-party = ["atlas_template", "app"]
 
 [tool.ruff.format]
 quote-style = "double"
