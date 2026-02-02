@@ -2,11 +2,12 @@
 RAG Pipeline Orchestrator
 
 Coordinates the full document lifecycle: ingestion → chunking →
-embedding → vector storage. Also handles semantic search queries.
+embedding → vector storage. Also handles semantic search queries
+and RAG-based question answering.
 
 This is the single entry point for the API layer. It composes the
 individual services (FileProcessor, TextChunker, VectorService,
-RAGRepository) into cohesive workflows.
+RAGRepository, LLMService) into cohesive workflows.
 """
 
 from __future__ import annotations
@@ -23,9 +24,10 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.models.orm import ChunkRecord, DocumentRecord
 from app.models.schemas import Document
 from app.repositories.rag import RAGRepository
-from app.schemas.rag import SearchResult
+from app.schemas.rag import AskResponse, SearchResult, SourceReference
 from app.services.chunking import TextChunker
 from app.services.ingestion import FileProcessor
+from app.services.llm import LLMService
 from app.services.vector import VectorService
 
 logger = logging.getLogger(__name__)
@@ -43,7 +45,7 @@ class RAGPipeline:
     """
     Orchestrates the full RAG document lifecycle.
 
-    Composes the individual CITADEL services into two workflows:
+    Composes the individual CITADEL services into three workflows:
 
     **Ingestion** (``ingest_file``):
         UploadFile bytes → FileProcessor → TextChunker →
@@ -51,6 +53,9 @@ class RAGPipeline:
 
     **Search** (``search``):
         Query string → VectorService → RAGRepository → SearchResults
+
+    **Ask** (``ask``):
+        Query string → VectorService → RAGRepository → LLMService → AskResponse
 
     All methods are async-safe. CPU-bound work (PDF parsing,
     embedding inference) is offloaded to thread pools by the
@@ -62,12 +67,14 @@ class RAGPipeline:
         async with session_factory() as session:
             result = await pipeline.ingest_file(session, "doc.pdf", raw)
             hits = await pipeline.search(session, "quantum computing", k=5)
+            answer = await pipeline.ask(session, "What is quantum computing?")
     """
 
     def __init__(self) -> None:
         self._processor = FileProcessor()
         self._chunker = TextChunker()
         self._repository = RAGRepository()
+        self._llm = LLMService()
 
     # ------------------------------------------------------------------
     # Ingestion
@@ -205,6 +212,107 @@ class RAGPipeline:
             )
 
         return results
+
+    # ------------------------------------------------------------------
+    # Ask (Full RAG)
+    # ------------------------------------------------------------------
+
+    async def ask(
+        self,
+        session: AsyncSession,
+        query: str,
+        k: int = 5,
+    ) -> AskResponse:
+        """
+        Answer a question using the full RAG pipeline.
+
+        Steps:
+            1. Embed the query (VectorService).
+            2. Retrieve relevant chunks (RAGRepository).
+            3. Build context from retrieved chunks.
+            4. Generate answer (LLMService with Ollama).
+            5. Return answer with source references.
+
+        The LLM service handles graceful degradation: if Ollama is
+        unavailable, a mock response is returned with is_mocked=True.
+
+        Args:
+            session: Active async database session.
+            query: Natural language question.
+            k: Number of context chunks to retrieve.
+
+        Returns:
+            AskResponse with answer, sources, and mock status.
+        """
+        logger.info("Processing RAG query: '%s' (k=%d)", query[:50], k)
+
+        # --- Step 1 & 2: Retrieve relevant chunks ---
+        query_embedding = await VectorService.embed_query(query)
+        hits = await self._repository.search_similar(
+            session,
+            query_embedding,
+            limit=k,
+        )
+
+        if not hits:
+            logger.warning("No relevant chunks found for query: '%s'", query[:50])
+            return AskResponse(
+                answer="Je n'ai trouvé aucun document pertinent pour répondre à cette question.",
+                sources=[],
+                is_mocked=False,
+                query=query,
+            )
+
+        # --- Step 3: Build context and source references ---
+        context_chunks: list[str] = []
+        sources: list[SourceReference] = []
+
+        for chunk, score in hits:
+            context_chunks.append(chunk.content)
+
+            # Resolve source filename
+            doc = await self._repository.get_document_by_id(session, chunk.document_id)
+            filename = doc.filename if doc else "unknown"
+
+            # Create preview (first 100 chars)
+            preview = chunk.content[:100].replace("\n", " ")
+            if len(chunk.content) > 100:
+                preview += "..."
+
+            sources.append(
+                SourceReference(
+                    filename=filename,
+                    chunk_index=chunk.chunk_index,
+                    score=score,
+                    preview=preview,
+                )
+            )
+
+        logger.info(
+            "Retrieved %d chunks for context (top score=%.3f)",
+            len(context_chunks),
+            hits[0][1] if hits else 0,
+        )
+
+        # --- Step 4: Generate answer via LLM ---
+        llm_response = await self._llm.generate_response(
+            query=query,
+            context_chunks=context_chunks,
+        )
+
+        logger.info(
+            "Generated response (mocked=%s, length=%d)",
+            llm_response.is_mocked,
+            len(llm_response.content),
+        )
+
+        # --- Step 5: Build response ---
+        return AskResponse(
+            answer=llm_response.content,
+            sources=sources,
+            is_mocked=llm_response.is_mocked,
+            query=query,
+        )
 
     # ------------------------------------------------------------------
     # Internal helpers

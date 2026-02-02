@@ -6,6 +6,7 @@ HTTP endpoints for the CITADEL retrieval-augmented generation pipeline.
 Endpoints:
     POST /ingest  — Upload a file for async ingestion (returns 202).
     POST /search  — Semantic search across ingested documents.
+    POST /ask     — Full RAG: retrieve context and generate answer.
 """
 
 from __future__ import annotations
@@ -25,7 +26,13 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.database import get_db, get_session_factory
 from app.repositories.rag import RAGRepository
-from app.schemas.rag import IngestResponse, SearchRequest, SearchResult
+from app.schemas.rag import (
+    AskRequest,
+    AskResponse,
+    IngestResponse,
+    SearchRequest,
+    SearchResult,
+)
 from app.services.rag_pipeline import RAGPipeline
 
 logger = logging.getLogger(__name__)
@@ -157,3 +164,81 @@ async def search(
     cosine similarity search via pgvector on stored chunk embeddings.
     """
     return await pipeline.search(db, request.query, request.k)
+
+
+@router.post(
+    "/ask",
+    response_model=AskResponse,
+    summary="Ask a question using RAG",
+    responses={
+        200: {
+            "description": "Answer generated successfully",
+            "content": {
+                "application/json": {
+                    "examples": {
+                        "normal": {
+                            "summary": "Normal response with Ollama",
+                            "value": {
+                                "answer": "Based on the context...",
+                                "sources": [
+                                    {
+                                        "filename": "doc.pdf",
+                                        "chunk_index": 0,
+                                        "score": 0.85,
+                                        "preview": "First 100 chars...",
+                                    }
+                                ],
+                                "is_mocked": False,
+                                "query": "What is quantum computing?",
+                            },
+                        },
+                        "mocked": {
+                            "summary": "Mock response (Ollama unavailable)",
+                            "value": {
+                                "answer": "⚠️ Note: AI Service unavailable...",
+                                "sources": [],
+                                "is_mocked": True,
+                                "query": "What is quantum computing?",
+                            },
+                        },
+                    }
+                }
+            },
+        },
+    },
+)
+async def ask(
+    request: AskRequest,
+    db: AsyncSession = Depends(get_db),
+    pipeline: RAGPipeline = Depends(_get_pipeline),
+) -> AskResponse:
+    """
+    Answer a question using the full RAG pipeline.
+
+    Process:
+        1. Embed the query using the local MiniLM model.
+        2. Retrieve the k most relevant document chunks via pgvector.
+        3. Generate an answer using Ollama (local LLM).
+
+    Graceful Degradation:
+        If Ollama is unavailable (not running), the endpoint returns
+        a mock response with ``is_mocked=True``. The retrieval step
+        still works, so you can see which documents would be used.
+
+    To enable full responses, start Ollama:
+        ```
+        ollama serve
+        ollama pull mistral
+        ```
+    """
+    logger.info("RAG /ask request: query='%s', k=%d", request.query[:50], request.k)
+
+    response = await pipeline.ask(db, request.query, request.k)
+
+    if response.is_mocked:
+        logger.warning(
+            "Returning mocked response for query '%s' (Ollama unavailable)",
+            request.query[:50],
+        )
+
+    return response
