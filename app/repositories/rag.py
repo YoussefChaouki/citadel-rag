@@ -30,8 +30,8 @@ class RAGRepository:
     Key guarantees:
         - ``save_document_with_chunks``: atomic — either the document
           AND all chunks are persisted, or nothing is.
-        - ``search_similar``: returns chunks ordered by cosine similarity
-          (closest first) using pgvector's HNSW index.
+        - ``search_similar``: returns chunks with cosine similarity scores,
+          ordered by relevance (highest score first).
     """
 
     # ------------------------------------------------------------------
@@ -78,7 +78,7 @@ class RAGRepository:
         # Atomic insert: document + all chunks in one transaction
         session.add(document)
         session.add_all(chunks)
-        await session.flush()  # Assign server-side defaults before commit
+        await session.flush()
         await session.commit()
         await session.refresh(document)
 
@@ -119,12 +119,15 @@ class RAGRepository:
         session: AsyncSession,
         query_embedding: list[float],
         limit: int = 5,
-    ) -> Sequence[ChunkRecord]:
+    ) -> list[tuple[ChunkRecord, float]]:
         """
         Search chunks by cosine similarity against a query vector.
 
         Uses pgvector's ``cosine_distance`` operator, leveraging the
         HNSW index on ``chunks.embedding`` for sub-linear lookup.
+
+        The cosine distance is converted to a similarity score:
+        ``score = 1 - distance`` (range: [-1, 1], higher = more similar).
 
         Args:
             session: Active async database session.
@@ -132,16 +135,24 @@ class RAGRepository:
             limit: Maximum number of results to return.
 
         Returns:
-            List of ChunkRecords ordered by similarity (closest first).
+            List of (ChunkRecord, similarity_score) tuples,
+            ordered by similarity (highest first).
         """
+        distance = ChunkRecord.embedding.cosine_distance(query_embedding).label(
+            "distance"
+        )
+
         stmt = (
-            select(ChunkRecord)
+            select(ChunkRecord, distance)
             .where(ChunkRecord.embedding.isnot(None))
-            .order_by(ChunkRecord.embedding.cosine_distance(query_embedding))
+            .order_by(distance)
             .limit(limit)
         )
         result = await session.execute(stmt)
-        return result.scalars().all()
+        rows = result.all()
+
+        # Convert cosine distance → similarity score
+        return [(row[0], round(1.0 - float(row[1]), 4)) for row in rows]
 
     async def get_chunks_by_document(
         self,
