@@ -15,6 +15,7 @@ from uuid import UUID
 
 import fitz
 import pytest
+
 from app.models.schemas import Document
 from app.services.ingestion import SUPPORTED_EXTENSIONS, FileProcessor
 
