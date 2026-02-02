@@ -23,6 +23,7 @@ dependencies = [
     "pymupdf>=1.24.0",
     "langchain-text-splitters>=0.2.0",
     "sentence-transformers>=3.0.0",
+    "python-multipart>=0.0.6",
 ]
 
 [project.optional-dependencies]
