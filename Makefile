@@ -1,9 +1,11 @@
 # ==============================================================================
-# Atlas Backend - Development Commands
+# CITADEL RAG Pipeline - Development Commands
 # Common tasks for local development, testing, and deployment
 # ==============================================================================
 
-.PHONY: install run test test-live lint format docker-build up down rebuild logs logs-api db-shell db-tables mig-up mig-rev
+.PHONY: install run run-citadel test test-live test-rag lint format \
+        docker-build up down rebuild logs logs-api logs-rag \
+        db-shell db-tables mig-up mig-rev
 
 # --- Local Development ---
 
@@ -12,6 +14,9 @@ install:
 
 run:
 	uvicorn atlas_template.main:app --host 0.0.0.0 --port 8000 --reload
+
+run-citadel:
+	uvicorn app.main:app --host 0.0.0.0 --port 8001 --reload
 
 # --- Testing ---
 
@@ -22,11 +27,16 @@ test-live:
 	# Requires Docker stack running (make up)
 	pytest tests/integration -v
 
+test-rag:
+	# Requires Docker stack with rag-api running
+	pytest tests/integration/test_rag_flow.py -v
+
 # --- Code Quality ---
 
 lint:
 	ruff check --fix .
 	mypy src/
+	mypy app/ --strict
 
 format:
 	ruff format .
@@ -40,7 +50,6 @@ down:
 	docker compose down
 
 rebuild:
-	# Full rebuild: stops containers, rebuilds images, restarts
 	docker compose down
 	docker compose up -d --build
 
@@ -50,10 +59,12 @@ logs:
 logs-api:
 	docker compose logs -f api
 
+logs-rag:
+	docker compose logs -f rag-api
+
 # --- Database Tools ---
 
 db-shell:
-	# Opens psql shell inside the database container
 	docker compose exec db psql -U atlas -d atlas_db
 
 db-tables:
@@ -63,7 +74,6 @@ db-tables:
 
 mig-rev:
 	# Usage: make mig-rev m="add users table"
-	# POSTGRES_HOST=localhost required for host-to-container connection
 	POSTGRES_HOST=localhost alembic revision --autogenerate -m "$(m)"
 
 mig-up:
