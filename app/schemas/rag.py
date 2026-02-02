@@ -53,3 +53,44 @@ class IngestResponse(BaseModel):
         description="Processing status: 'processing', 'duplicate', 'completed'",
     )
     message: str = Field(description="Human-readable status message")
+
+
+class AskRequest(BaseModel):
+    """Request body for RAG question answering."""
+
+    query: str = Field(
+        ...,
+        min_length=1,
+        max_length=2000,
+        description="Natural language question to answer",
+    )
+    k: int = Field(
+        default=5,
+        ge=1,
+        le=20,
+        description="Number of context chunks to retrieve",
+    )
+
+
+class SourceReference(BaseModel):
+    """Reference to a source document used in the answer."""
+
+    filename: str = Field(description="Source document filename")
+    chunk_index: int = Field(description="Chunk position within document")
+    score: float = Field(description="Relevance score (higher = more relevant)")
+    preview: str = Field(description="First 100 chars of chunk content")
+
+
+class AskResponse(BaseModel):
+    """Response from the RAG question answering endpoint."""
+
+    answer: str = Field(description="Generated answer text")
+    sources: list[SourceReference] = Field(
+        default_factory=list,
+        description="Source documents used to generate the answer",
+    )
+    is_mocked: bool = Field(
+        default=False,
+        description="True if LLM was unavailable and response is simulated",
+    )
+    query: str = Field(description="Original query for reference")
