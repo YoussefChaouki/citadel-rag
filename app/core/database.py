@@ -19,6 +19,7 @@ import os
 from collections.abc import AsyncGenerator
 
 from sqlalchemy.ext.asyncio import (
+    AsyncEngine,
     AsyncSession,
     async_sessionmaker,
     create_async_engine,
@@ -41,7 +42,7 @@ def _build_database_url() -> str:
     return f"postgresql+asyncpg://{user}:{password}@{host}:{port}/{db}"
 
 
-def get_engine():  # noqa: ANN201
+def get_engine() -> AsyncEngine:  # noqa: ANN201
     """Get or create the async SQLAlchemy engine (singleton)."""
     global _engine  # noqa: PLW0603
     if _engine is None:
