@@ -3,8 +3,8 @@
 # Common tasks for local development, testing, and deployment
 # ==============================================================================
 
-.PHONY: install run run-citadel test test-live test-rag lint format \
-        docker-build up down rebuild logs logs-api logs-rag \
+.PHONY: install run run-citadel run-ui test test-live test-rag lint format \
+        docker-build up down rebuild logs logs-api logs-rag logs-ui \
         db-shell db-tables mig-up mig-rev
 
 # --- Local Development ---
@@ -17,6 +17,9 @@ run:
 
 run-citadel:
 	uvicorn app.main:app --host 0.0.0.0 --port 8001 --reload
+
+run-ui:
+	cd ui && streamlit run main.py --server.port 8501
 
 # --- Testing ---
 
@@ -43,8 +46,17 @@ format:
 
 # --- Docker Operations ---
 
+# Start ONLY dependencies (DB + Redis) - for local development
+deps:
+	docker compose up -d db redis
+	@echo "✅ DB + Redis ready. Now run: make run-citadel"
+
+# Start FULL Docker stack (all services)
 up:
 	docker compose up -d
+	@echo "✅ Full stack ready:"
+	@echo "   - UI:  http://localhost:8501"
+	@echo "   - API: http://localhost:8001"
 
 down:
 	docker compose down
@@ -61,6 +73,9 @@ logs-api:
 
 logs-rag:
 	docker compose logs -f rag-api
+
+logs-ui:
+	docker compose logs -f rag-ui
 
 # --- Database Tools ---
 

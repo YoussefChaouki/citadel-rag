@@ -14,6 +14,8 @@ services:
     env_file:
       - path: .env
         required: false
+    environment:
+      - POSTGRES_HOST=db
     volumes:
       - ./src:/app/src
     depends_on:
@@ -21,7 +23,7 @@ services:
       - redis
     command: uvicorn atlas_template.main:app --host 0.0.0.0 --port 8000 --reload
 
-  # CITADEL RAG API (ingestion, chunking, embedding, search)
+  # CITADEL RAG API (ingestion, chunking, embedding, search, ask)
   rag-api:
     build: .
     container_name: citadel-rag-api
@@ -30,6 +32,9 @@ services:
     env_file:
       - path: .env
         required: false
+    environment:
+      - POSTGRES_HOST=db
+      - OLLAMA_BASE_URL=http://host.docker.internal:11434
     volumes:
       - ./app:/app/app
       - ./src:/app/src
@@ -37,6 +42,20 @@ services:
       - db
       - redis
     command: uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
+
+  # CITADEL RAG Frontend (Streamlit UI)
+  rag-ui:
+    build:
+      context: ./ui
+      dockerfile: Dockerfile
+    container_name: citadel-rag-ui
+    ports:
+      - "8501:8501"
+    environment:
+      - API_URL=http://rag-api:8000
+    depends_on:
+      - rag-api
+    restart: unless-stopped
 
   db:
     image: pgvector/pgvector:pg16
