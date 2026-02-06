@@ -5,7 +5,7 @@
 
 .PHONY: install run run-citadel run-ui test test-live test-rag lint format \
         docker-build up down rebuild logs logs-api logs-rag logs-ui \
-        db-shell db-tables mig-up mig-rev
+        db-shell db-tables mig-up mig-rev eval seed-eval check check-full
 
 # --- Local Development ---
 
@@ -33,6 +33,36 @@ test-live:
 test-rag:
 	# Requires Docker stack with rag-api running
 	pytest tests/integration/test_rag_flow.py -v
+
+# --- Evaluation ---
+
+eval:
+	# RAG Retrieval Evaluation (requires API running)
+	python scripts/evaluate_rag.py
+
+eval-verbose:
+	# Evaluation with k=10 results
+	python scripts/evaluate_rag.py --k 10
+
+seed-eval:
+	# Seed ML sample documents for evaluation
+	python scripts/seed_eval_docs.py
+
+seed-eval-clean:
+	# Clean and reseed evaluation documents
+	python scripts/seed_eval_docs.py --clean
+
+# --- Pre-Push Validation ---
+
+check:
+	# Quick validation (format, lint, unit tests)
+	@chmod +x scripts/pre-push-check.sh
+	@./scripts/pre-push-check.sh
+
+check-full:
+	# Full validation (includes integration tests)
+	@chmod +x scripts/pre-push-check.sh
+	@./scripts/pre-push-check.sh --full
 
 # --- Code Quality ---
 
