@@ -1,0 +1,157 @@
+{
+  "version": "2.0",
+  "description": "Scientific golden dataset for CITADEL RAG evaluation - Machine Learning domain",
+  "domain": "machine_learning",
+  "created_at": "2026-02-06",
+  "evaluation_config": {
+    "default_k": 5,
+    "source_match_mode": "partial",
+    "case_sensitive": false,
+    "pass_threshold": 0.75
+  },
+  "categories": {
+    "fundamentals": "Basic ML concepts that should be easy to retrieve",
+    "algorithms": "Specific algorithm details requiring precise retrieval",
+    "deep_learning": "Neural network architectures and concepts",
+    "practical": "Implementation and best practices",
+    "negative": "Queries that should NOT find relevant content"
+  },
+  "entries": [
+    {
+      "id": "ML001",
+      "query": "What is the difference between supervised and unsupervised learning?",
+      "expected_source": "ml_fundamentals",
+      "expected_text_content": "labeled",
+      "category": "fundamentals",
+      "difficulty": "easy"
+    },
+    {
+      "id": "ML002",
+      "query": "Explain the bias-variance tradeoff",
+      "expected_source": "ml_fundamentals",
+      "expected_text_content": "bias",
+      "category": "fundamentals",
+      "difficulty": "easy"
+    },
+    {
+      "id": "ML003",
+      "query": "What is overfitting and how to prevent it?",
+      "expected_source": "ml_fundamentals",
+      "expected_text_content": "overfit",
+      "category": "fundamentals",
+      "difficulty": "easy"
+    },
+    {
+      "id": "ML004",
+      "query": "How does gradient descent optimization work?",
+      "expected_source": "ml_fundamentals",
+      "expected_text_content": "gradient",
+      "category": "algorithms",
+      "difficulty": "medium"
+    },
+    {
+      "id": "ML005",
+      "query": "Explain the Random Forest algorithm",
+      "expected_source": "ml_algorithms",
+      "expected_text_content": "tree",
+      "category": "algorithms",
+      "difficulty": "medium"
+    },
+    {
+      "id": "ML006",
+      "query": "What is the kernel trick in SVM?",
+      "expected_source": "ml_algorithms",
+      "expected_text_content": "kernel",
+      "category": "algorithms",
+      "difficulty": "hard"
+    },
+    {
+      "id": "ML007",
+      "query": "How does backpropagation work in neural networks?",
+      "expected_source": "deep_learning",
+      "expected_text_content": "backpropagation",
+      "category": "deep_learning",
+      "difficulty": "medium"
+    },
+    {
+      "id": "ML008",
+      "query": "What is the architecture of a CNN?",
+      "expected_source": "deep_learning",
+      "expected_text_content": "convolutional",
+      "category": "deep_learning",
+      "difficulty": "medium"
+    },
+    {
+      "id": "ML009",
+      "query": "Explain the attention mechanism in transformers",
+      "expected_source": "deep_learning",
+      "expected_text_content": "attention",
+      "category": "deep_learning",
+      "difficulty": "hard"
+    },
+    {
+      "id": "ML010",
+      "query": "What is transfer learning and when to use it?",
+      "expected_source": "deep_learning",
+      "expected_text_content": "transfer",
+      "category": "deep_learning",
+      "difficulty": "medium"
+    },
+    {
+      "id": "ML011",
+      "query": "How to handle imbalanced datasets?",
+      "expected_source": "ml_practical",
+      "expected_text_content": "imbalance",
+      "category": "practical",
+      "difficulty": "medium"
+    },
+    {
+      "id": "ML012",
+      "query": "What are best practices for feature engineering?",
+      "expected_source": "ml_practical",
+      "expected_text_content": "feature",
+      "category": "practical",
+      "difficulty": "medium"
+    },
+    {
+      "id": "ML013",
+      "query": "How to evaluate a classification model?",
+      "expected_source": "ml_practical",
+      "expected_text_content": "precision",
+      "category": "practical",
+      "difficulty": "easy"
+    },
+    {
+      "id": "ML014",
+      "query": "What is cross-validation and why use it?",
+      "expected_source": "ml_practical",
+      "expected_text_content": "cross-validation",
+      "category": "practical",
+      "difficulty": "easy"
+    },
+    {
+      "id": "NEG001",
+      "query": "What is the recipe for chocolate cake?",
+      "expected_source": "NONE",
+      "expected_text_content": "flour",
+      "category": "negative",
+      "difficulty": "negative"
+    },
+    {
+      "id": "NEG002",
+      "query": "Who won the 2024 FIFA World Cup?",
+      "expected_source": "NONE",
+      "expected_text_content": "FIFA",
+      "category": "negative",
+      "difficulty": "negative"
+    },
+    {
+      "id": "NEG003",
+      "query": "How to fix a car engine?",
+      "expected_source": "NONE",
+      "expected_text_content": "engine",
+      "category": "negative",
+      "difficulty": "negative"
+    }
+  ]
+}
