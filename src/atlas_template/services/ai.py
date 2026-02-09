@@ -5,10 +5,13 @@ OpenAI integration for generating text embeddings.
 Supports mock mode for local development without API costs.
 """
 
+import logging
 import os
 import random
 
 from openai import AsyncOpenAI
+
+logger = logging.getLogger(__name__)
 
 EMBEDDING_DIMENSION = 1536  # text-embedding-3-small output size
 
@@ -44,6 +47,5 @@ async def get_embedding(text: str) -> list[float]:
         )
         return response.data[0].embedding
     except Exception as e:
-        # TODO: Replace print with proper logging
-        print(f"OpenAI Error: {e}")
+        logger.error("OpenAI API error: %s", str(e))
         raise e

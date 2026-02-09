@@ -111,10 +111,34 @@ async def ingest_file(
     """
     Upload a PDF or Markdown file for ingestion into the RAG pipeline.
 
-    The file content is hashed (SHA-256) for deduplication. If the file
-    has already been ingested, returns 200 with the existing document info.
-    Otherwise, the processing pipeline runs in the background and the
-    endpoint returns 202 immediately.
+    Performs a fast deduplication check using SHA-256 content hashing before
+    accepting the file. If the hash already exists in the database, returns
+    200 OK with the existing document metadata. Otherwise, queues the
+    file for background processing and returns 202 Accepted immediately.
+
+    Background Processing:
+        The ingestion pipeline (text extraction → chunking → embedding →
+        persistence) runs as a FastAPI BackgroundTask with its own database
+        session. This decouples upload latency from processing time, which
+        can be significant for large PDFs (10+ seconds for embedding).
+
+    Args:
+        file: Uploaded file (multipart/form-data). Must be .pdf or .md.
+        response: FastAPI Response object for status code override.
+        background_tasks: FastAPI background task scheduler.
+        db: Request-scoped async database session (injected).
+        repo: RAGRepository instance (injected).
+
+    Returns:
+        IngestResponse with document_id, filename, chunks_count, status,
+        and a human-readable message.
+
+    Raises:
+        HTTPException 422: If file extension is not .pdf or .md.
+
+    Status Codes:
+        200: File already ingested (duplicate detected via SHA-256).
+        202: File accepted for background processing.
     """
     raw = await file.read()
     filename = file.filename or "unknown"
@@ -164,9 +188,25 @@ async def search(
     """
     Search ingested documents by semantic similarity.
 
-    Embeds the query using the local MiniLM model, then performs
-    cosine similarity search via pgvector on stored chunk embeddings.
+    Embeds the query using the same MiniLM-L6-v2 model used during
+    ingestion, then performs cosine similarity search via pgvector on
+    stored chunk embeddings. Results are ordered by descending similarity
+    score (1.0 = identical, 0.0 = orthogonal).
+
+    The search uses an HNSW index (m=16, ef_construction=64) for
+    sub-linear approximate nearest neighbor lookup, achieving <100ms
+    latency on typical corpus sizes.
+
+    Args:
+        request: SearchRequest with query (str) and k (int, 1-50).
+        db: Request-scoped async database session (injected).
+        pipeline: RAGPipeline instance (injected).
+
+    Returns:
+        List of SearchResult DTOs with chunk content, similarity score,
+        source filename, chunk index, and parent document UUID.
     """
+
     return await pipeline.search(db, request.query, request.k)
 
 
@@ -219,21 +259,30 @@ async def ask(
     """
     Answer a question using the full RAG pipeline.
 
-    Process:
-        1. Embed the query using the local MiniLM model.
-        2. Retrieve the k most relevant document chunks via pgvector.
-        3. Generate an answer using Ollama (local LLM).
+    Orchestrates the retrieve-then-generate flow:
+        1. Embed the query using the local MiniLM-L6-v2 model.
+        2. Retrieve the k most semantically similar document chunks
+           via pgvector's HNSW cosine distance index.
+        3. Assemble retrieved chunks into a context window.
+        4. Generate an answer using Ollama (local Mistral model).
 
     Graceful Degradation:
-        If Ollama is unavailable (not running), the endpoint returns
-        a mock response with ``is_mocked=True``. The retrieval step
-        still works, so you can see which documents would be used.
+        If Ollama is unavailable (not running or unreachable), the endpoint
+        returns a structured mock response with is_mocked=True. The
+        retrieval step still executes, so sources are populated with
+        real chunk references and relevance scores. This allows:
+            - Evaluating retrieval quality independently of generation.
+            - Running in CI/CD without a GPU or LLM service.
+            - Demonstrating the system in environments without Ollama.
 
-    To enable full responses, start Ollama:
-        ```
-        ollama serve
-        ollama pull mistral
-        ```
+    Args:
+        request: AskRequest with query (str, 1-2000 chars) and k (int, 1-20).
+        db: Request-scoped async database session (injected).
+        pipeline: RAGPipeline instance (injected).
+
+    Returns:
+        AskResponse with answer text, source references, mock status,
+        and the original query.
     """
     logger.info("RAG /ask request: query='%s', k=%d", request.query[:50], request.k)
 
@@ -260,14 +309,23 @@ async def list_documents(
     """
     Retrieve all documents currently in the RAG system.
 
-    Includes document metadata and chunk counts. Useful for:
-        - UI listing/management
-        - Inventory checks
-        - Cleanup/maintenance operations
+    Returns document metadata including chunk counts for each ingested
+    file. Ordered by creation date (newest first).
+
+    Use cases:
+        - UI document listing and management.
+        - Inventory checks before evaluation runs.
+        - Monitoring ingestion pipeline health.
+
+    Args:
+        db: Request-scoped async database session (injected).
+        repo: RAGRepository instance (injected).
 
     Returns:
-        List of DocumentInfo dicts (filename, chunk count, creation date).
+        List of DocumentInfo DTOs with document_id, filename,
+        chunks_count, and ISO-formatted creation timestamp.
     """
+
     documents = await repo.get_all_documents(db)
 
     result: list[DocumentInfo] = []
@@ -300,24 +358,26 @@ async def delete_document(
     repo: RAGRepository = Depends(_get_repository),
 ) -> DeleteResponse:
     """
-    Delete a document and all its associated chunks from the RAG system.
+    Delete a document and all associated data from the RAG system.
 
-    When deleted:
-        - The document record is removed from ``documents`` table
-        - All chunk records are automatically removed via CASCADE
-        - Vector embeddings are cleaned up with the chunks
+    Performs a cascading delete: removing the document record automatically
+    removes all linked ChunkRecords (and their embeddings) via the
+    ON DELETE CASCADE foreign key constraint.
 
     This operation is permanent and cannot be undone.
 
     Args:
-        filename: Exact filename of document to delete
-        (e.g., "research_paper.pdf")
+        filename: Exact filename of the document to delete
+            (e.g., "research_paper.pdf"). Case-sensitive.
+        db: Request-scoped async database session (injected).
+        repo: RAGRepository instance (injected).
 
     Returns:
-        DeleteResponse with operation details.
+        DeleteResponse with success flag, filename, chunks_deleted count,
+        and a human-readable message.
 
     Raises:
-        404: If document with this filename does not exist.
+        HTTPException 404: If no document with this filename exists.
     """
     logger.info("Delete request for document: '%s'", filename)
 

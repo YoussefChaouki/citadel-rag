@@ -26,10 +26,17 @@ _session_factory: async_sessionmaker[AsyncSession] | None = None
 
 def _build_database_url() -> str:
     user = os.environ.get("POSTGRES_USER", "atlas")
-    password = os.environ.get("POSTGRES_PASSWORD", "atlas_password")
+    password = os.environ.get("POSTGRES_PASSWORD")
     host = os.environ.get("POSTGRES_HOST", "localhost")
     port = os.environ.get("POSTGRES_PORT", "5432")
     db = os.environ.get("POSTGRES_DB", "atlas_db")
+
+    if not password:
+        raise RuntimeError(
+            "POSTGRES_PASSWORD environment variable is required. "
+            "Set it in .env or export it before starting the application."
+        )
+
     return f"postgresql+asyncpg://{user}:{password}@{host}:{port}/{db}"
 
 
