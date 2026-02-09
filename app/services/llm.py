@@ -26,16 +26,16 @@ logger = logging.getLogger(__name__)
 # System prompt enforcing context-grounded responses
 SYSTEM_PROMPT: Final[
     str
-] = """Tu es un assistant expert. Tu dois répondre aux questions de l'utilisateur en utilisant UNIQUEMENT le contexte fourni ci-dessous.
+] = """You are an expert assistant. You must answer the user's questions using ONLY the context provided below.
 
-Règles strictes:
-1. Base ta réponse UNIQUEMENT sur le contexte fourni.
-2. Si le contexte ne contient pas l'information, dis-le clairement.
-3. Ne fabrique jamais d'information.
-4. Cite les sources quand c'est pertinent.
-5. Réponds de manière concise et précise.
+Strict rules:
+1. Base your answer ONLY on the provided context.
+2. If the context does not contain the information, state it clearly.
+3. Never fabricate information.
+4. Cite sources when relevant.
+5. Answer concisely and precisely.
 
-Contexte:
+Context:
 {context}
 """
 
@@ -58,20 +58,36 @@ class LLMService:
     """
     Async LLM service backed by Ollama with automatic fallback.
 
-    Handles connection failures gracefully by returning a mock response
-    instead of raising exceptions. This ensures the RAG pipeline remains
-    functional even when Ollama is not running.
+    Integrates with Ollama's /api/generate endpoint for local LLM
+    inference. When Ollama is unreachable (not running, network issue, or
+    timeout), the service returns a structured mock response instead of
+    raising exceptions.
 
-    Usage::
+    This fallback design ensures the RAG pipeline remains functional for
+    retrieval and source attribution even without a running LLM, which is
+    critical for:
+        - CI/CD environments where Ollama is not available.
+        - Development setups without a GPU.
+        - Demo scenarios where only retrieval quality matters.
 
-        service = LLMService()
-        response = await service.generate_response(
-            query="What is quantum computing?",
-            context_chunks=["Quantum computers use qubits...", "..."]
-        )
-        if response.is_mocked:
-            print("Warning: Using mock response")
-        print(response.content)
+    The system prompt enforces context-grounded responses: the LLM is
+    instructed to answer ONLY from the provided context and to explicitly
+    state when information is insufficient.
+
+    Configuration:
+        All settings are read from environment variables via CitadelSettings:
+            - OLLAMA_BASE_URL: API endpoint (default: host.docker.internal:11434)
+            - OLLAMA_MODEL: Model name (default: mistral)
+            - OLLAMA_TIMEOUT: Request timeout in seconds (default: 30.0)
+
+    Example:
+        >>> service = LLMService()
+        >>> response = await service.generate_response(
+        ...     query="What is quantum computing?",
+        ...     context_chunks=["Quantum computers use qubits..."]
+        ... )
+        >>> if response.is_mocked:
+        ...     logger.warning("Ollama unavailable — mock response returned")
     """
 
     def __init__(
@@ -98,18 +114,32 @@ class LLMService:
         context_chunks: list[str],
     ) -> LLMResponse:
         """
-        Generate a response using the LLM with provided context.
+        Generate a context-grounded response using the local LLM.
 
-        Attempts to call Ollama API. On connection failure or timeout,
-        returns a mock response with is_mocked=True.
+        Constructs a prompt with a French-language system instruction that
+        enforces strict context adherence, then calls Ollama's generate API.
+
+        On any connection or HTTP error, returns a mock response containing:
+            - A warning banner indicating AI service unavailability.
+            - A preview of the first retrieved chunk (proving retrieval works).
+            - The total number of chunks that would have been used.
+            - Instructions for starting Ollama.
 
         Args:
-            query: User's question.
-            context_chunks: Retrieved document chunks for context.
+            query: The user's natural language question.
+            context_chunks: Retrieved document chunks to ground the response.
+                Empty list triggers a "no context available" system message.
 
         Returns:
-            LLMResponse with generated content and mock status.
+            LLMResponse with:
+                - content (str): Generated answer or mock fallback text.
+                - is_mocked (bool): True if Ollama was unreachable.
+
+        Note:
+            This method never raises exceptions. All error paths return
+            a valid LLMResponse with is_mocked=True.
         """
+
         # Format context from chunks
         context = self._format_context(context_chunks)
         prompt = self._build_prompt(query, context)
@@ -168,7 +198,7 @@ class LLMService:
     def _format_context(self, chunks: list[str]) -> str:
         """Format context chunks into a single string."""
         if not chunks:
-            return "Aucun contexte disponible."
+            return "No context available."
 
         formatted_parts: list[str] = []
         for i, chunk in enumerate(chunks, 1):
@@ -179,7 +209,7 @@ class LLMService:
     def _build_prompt(self, query: str, context: str) -> str:
         """Build the full prompt with system instructions."""
         system = SYSTEM_PROMPT.format(context=context)
-        return f"{system}\n\nQuestion: {query}\n\nRéponse:"
+        return f"{system}\n\nQuestion: {query}\n\nAnswer:"
 
     def _create_mock_response(self, context_chunks: list[str]) -> LLMResponse:
         """

@@ -43,31 +43,38 @@ class IngestResult(NamedTuple):
 
 class RAGPipeline:
     """
-    Orchestrates the full RAG document lifecycle.
+    RAG Pipeline Orchestrator.
 
-    Composes the individual CITADEL services into three workflows:
+    Central coordinator for the CITADEL document lifecycle. Composes five
+    independent services into three cohesive workflows:
 
-    **Ingestion** (``ingest_file``):
-        UploadFile bytes → FileProcessor → TextChunker →
-        VectorService → RAGRepository
+    Ingestion (ingest_file):
+        Raw bytes → FileProcessor (text extraction) → TextChunker (recursive
+        splitting) → VectorService (MiniLM-L6-v2 embedding) → RAGRepository
+        (atomic persist with SHA-256 dedup).
 
-    **Search** (``search``):
-        Query string → VectorService → RAGRepository → SearchResults
+    Search (search):
+        Query string → VectorService (embed) → RAGRepository (pgvector cosine
+        similarity via HNSW index) → ranked SearchResult DTOs.
 
-    **Ask** (``ask``):
-        Query string → VectorService → RAGRepository → LLMService → AskResponse
+    Ask (ask):
+        Query string → Search pipeline → LLMService (Ollama generation with
+        context grounding) → AskResponse with source references.
 
-    All methods are async-safe. CPU-bound work (PDF parsing,
-    embedding inference) is offloaded to thread pools by the
-    underlying services.
+    Design Principles:
+        - Single entry point for the API layer — endpoints never call
+          individual services directly.
+        - All CPU-bound work (PDF parsing, embedding inference) is offloaded
+          to thread pools by the underlying services.
+        - Graceful degradation: if Ollama is unreachable, ask returns
+          a mock response with is_mocked=True while retrieval still works.
 
-    Usage::
-
-        pipeline = RAGPipeline()
-        async with session_factory() as session:
-            result = await pipeline.ingest_file(session, "doc.pdf", raw)
-            hits = await pipeline.search(session, "quantum computing", k=5)
-            answer = await pipeline.ask(session, "What is quantum computing?")
+    Example:
+        >>> pipeline = RAGPipeline()
+        >>> async with session_factory() as session:
+        ...     result = await pipeline.ingest_file(session, "doc.pdf", raw_bytes)
+        ...     hits = await pipeline.search(session, "quantum computing", k=5)
+        ...     answer = await pipeline.ask(session, "What is entanglement?")
     """
 
     def __init__(self) -> None:
@@ -89,20 +96,35 @@ class RAGPipeline:
         """
         Process a file through the full ingestion pipeline.
 
-        Steps:
-            1. Dedup check via SHA-256 hash (fast, avoids redundant work).
-            2. Extract text content (FileProcessor).
-            3. Split into chunks (TextChunker).
-            4. Generate embeddings (VectorService, CPU-bound in thread).
-            5. Persist document + chunks atomically (RAGRepository).
+        Executes a five-stage pipeline with an early-exit dedup check:
+
+        1. Dedup — SHA-256 hash lookup against ``documents.file_hash``
+           unique index. Returns immediately if content already exists.
+        2. Extract — FileProcessor writes bytes to a temp file, extracts
+           text via PyMuPDF (PDF) or UTF-8 decode (Markdown).
+        3. Chunk — RecursiveCharacterTextSplitter with 500-char windows
+           and 100-char overlap, tuned for MiniLM's 256-token context.
+        4. Embed — Batch encoding via sentence-transformers in a thread
+           pool (CPU-bound, non-blocking to the event loop).
+        5. Persist — Atomic INSERT of DocumentRecord + all ChunkRecords
+           in a single transaction with rollback on failure.
 
         Args:
-            session: Active async database session.
-            filename: Original filename with extension.
-            file_bytes: Raw file content.
+            session: Active SQLAlchemy AsyncSession (caller-managed lifecycle).
+            filename: Original filename with extension (e.g., "report.pdf").
+                Used for display and dedup reporting, not for format detection.
+            file_bytes: Raw file content as bytes.
 
         Returns:
-            IngestResult with document_id, chunks_count, and duplicate flag.
+            IngestResult: Named tuple containing:
+                - document_id (UUID): Persisted document identifier.
+                - chunks_count (int): Number of chunks created.
+                - is_duplicate (bool): True if content hash already existed.
+
+        Raises:
+            ValueError: If file extension is not .pdf or .md.
+            SQLAlchemyError: On database constraint violations or connectivity
+                issues.
         """
         # --- Step 1: Fast dedup check ---
         file_hash = hashlib.sha256(file_bytes).hexdigest()
@@ -179,14 +201,25 @@ class RAGPipeline:
         """
         Perform semantic search against the chunk vector store.
 
+        Embeds the query using the same MiniLM-L6-v2 model used during ingestion,
+        then executes a pgvector cosine distance query against the HNSW index on
+        the chunks.embedding column.
+
+        Similarity scores are computed as 1 - cosine_distance and range from
+        -1 (opposite) to 1 (identical), with typical relevant results scoring
+        above 0.5.
+
         Args:
-            session: Active async database session.
-            query: Natural language search query.
-            k: Maximum number of results.
+            session: Active SQLAlchemy AsyncSession.
+            query: Natural language search query (1–2000 chars).
+            k: Maximum number of results to return. Defaults to 5.
 
         Returns:
-            List of SearchResult DTOs ordered by relevance.
+            List of SearchResult DTOs ordered by descending similarity score.
+            Each result includes: chunk content, score, source filename,
+            chunk index, and parent document UUID.
         """
+
         query_embedding = await VectorService.embed_query(query)
 
         hits = await self._repository.search_similar(
@@ -224,26 +257,35 @@ class RAGPipeline:
         k: int = 5,
     ) -> AskResponse:
         """
-        Answer a question using the full RAG pipeline.
+        Answer a question using the full retrieve-then-generate pipeline.
 
-        Steps:
-            1. Embed the query (VectorService).
-            2. Retrieve relevant chunks (RAGRepository).
-            3. Build context from retrieved chunks.
-            4. Generate answer (LLMService with Ollama).
-            5. Return answer with source references.
+        Execution flow:
+            1. Embed query via VectorService (MiniLM-L6-v2).
+            2. Retrieve top-k chunks via pgvector cosine similarity.
+            3. Assemble context string from retrieved chunks.
+            4. Send context + query to LLMService (Ollama/Mistral).
+            5. Package response with source references and mock status.
 
-        The LLM service handles graceful degradation: if Ollama is
-        unavailable, a mock response is returned with is_mocked=True.
+        Graceful Degradation:
+            If Ollama is unreachable (ConnectError/TimeoutException), the
+            LLMService returns a mock response with is_mocked=True. The
+            retrieval step still executes normally, so source references are
+            always populated when relevant documents exist.
 
         Args:
-            session: Active async database session.
-            query: Natural language question.
-            k: Number of context chunks to retrieve.
+            session: Active SQLAlchemy AsyncSession.
+            query: Natural language question (1–2000 chars).
+            k: Number of context chunks to retrieve. Defaults to 5.
+                Higher values provide more context but may introduce noise.
 
         Returns:
-            AskResponse with answer, sources, and mock status.
+            AskResponse containing:
+                - answer (str): Generated text or mock fallback.
+                - sources (list[SourceReference]): Chunk references with scores.
+                - is_mocked (bool): True if LLM was unavailable.
+                - query (str): Original query for client-side reference.
         """
+
         logger.info("Processing RAG query: '%s' (k=%d)", query[:50], k)
 
         # --- Step 1 & 2: Retrieve relevant chunks ---
@@ -257,7 +299,7 @@ class RAGPipeline:
         if not hits:
             logger.warning("No relevant chunks found for query: '%s'", query[:50])
             return AskResponse(
-                answer="Je n'ai trouvé aucun document pertinent pour répondre à cette question.",
+                answer="I found no relevant documents to answer this question.",
                 sources=[],
                 is_mocked=False,
                 query=query,
