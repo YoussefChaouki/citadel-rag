@@ -54,6 +54,15 @@ class ChatMessage(TypedDict):
     is_mocked: bool
 
 
+class DocumentRecord(TypedDict):
+    """Document record from list_documents endpoint."""
+
+    document_id: str
+    filename: str
+    chunks_count: int
+    created_at: str
+
+
 # ---------------------------------------------------------------------------
 # Page Configuration
 # ---------------------------------------------------------------------------
@@ -82,26 +91,44 @@ st.markdown(
         margin-bottom: 2rem;
     }
 
-    /* Source cards */
+    /* Source cards with improved spacing */
     .source-card {
         background: #F8FAFC;
         border-left: 3px solid #3B82F6;
-        padding: 0.75rem 1rem;
-        margin: 0.5rem 0;
+        padding: 1rem;
+        margin: 0.75rem 0;
         border-radius: 0 0.5rem 0.5rem 0;
+        line-height: 1.6;
     }
     .source-filename {
         font-weight: 600;
         color: #1E40AF;
+        font-size: 0.95rem;
+    }
+    .source-meta {
+        display: inline-block;
+        margin-left: 0.5rem;
+    }
+    .source-score-container {
+        display: inline-flex;
+        align-items: center;
+        gap: 0.25rem;
     }
     .source-score {
         color: #059669;
         font-size: 0.85rem;
+        font-weight: 500;
+    }
+    .source-score-help {
+        cursor: help;
+        color: #0891B2;
+        font-weight: bold;
     }
     .source-preview {
         color: #4B5563;
         font-size: 0.9rem;
-        margin-top: 0.25rem;
+        margin-top: 0.5rem;
+        font-style: italic;
     }
 
     /* Mock mode warning */
@@ -113,9 +140,10 @@ st.markdown(
         margin-bottom: 1rem;
     }
 
-    /* Chat styling */
+    /* Chat styling with better padding */
     .stChatMessage {
-        padding: 1rem;
+        padding: 1.5rem 1rem;
+        margin: 0.5rem 0;
     }
 
     /* Sidebar styling */
@@ -124,23 +152,59 @@ st.markdown(
         font-weight: 600;
         color: #1E3A5F;
         margin-bottom: 1rem;
+        margin-top: 0.5rem;
     }
 
-    /* Success/Error badges */
-    .status-badge {
-        display: inline-block;
-        padding: 0.25rem 0.75rem;
-        border-radius: 1rem;
-        font-size: 0.85rem;
+    .document-item {
+        background: #F3F4F6;
+        border-left: 2px solid #6366F1;
+        padding: 0.75rem 0.5rem;
+        margin: 0.5rem 0;
+        border-radius: 0 0.25rem 0.25rem 0;
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        font-size: 0.9rem;
+    }
+
+    .document-name {
+        flex: 1;
+        color: #1F2937;
         font-weight: 500;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
     }
-    .status-success {
-        background: #D1FAE5;
-        color: #065F46;
+
+    .document-chunks {
+        color: #9CA3AF;
+        font-size: 0.8rem;
+        margin-left: 0.5rem;
     }
-    .status-error {
-        background: #FEE2E2;
-        color: #991B1B;
+
+    /* Status badge styling (subtle) */
+    .status-subtle {
+        display: inline-flex;
+        align-items: center;
+        gap: 0.4rem;
+        font-size: 0.9rem;
+        color: #059669;
+    }
+
+    /* Button styling */
+    .delete-button {
+        color: #DC2626;
+        cursor: pointer;
+        font-weight: bold;
+        padding: 0.25rem 0.5rem;
+    }
+
+    /* Improved divider */
+    hr {
+        border: none;
+        height: 1px;
+        background: linear-gradient(to right, transparent, #E5E7EB, transparent);
+        margin: 1rem 0;
     }
     </style>
     """,
@@ -159,6 +223,10 @@ def init_session_state() -> None:
         st.session_state.messages = []  # list[ChatMessage]
     if "ingested_files" not in st.session_state:
         st.session_state.ingested_files = []  # list[str]
+    if "num_sources" not in st.session_state:
+        st.session_state.num_sources = 5
+    if "refresh_documents" not in st.session_state:
+        st.session_state.refresh_documents = True
 
 
 init_session_state()
@@ -217,6 +285,43 @@ def ask_question(query: str, k: int = 5) -> dict[str, Any]:
         return result
 
 
+def get_documents() -> list[DocumentRecord]:
+    """
+    Retrieve list of all documents in the system.
+
+    Returns:
+        List of DocumentRecord dicts.
+
+    Raises:
+        httpx.HTTPError: On network or API errors.
+    """
+    with httpx.Client(timeout=10.0) as client:
+        response = client.get(f"{RAG_ENDPOINT}/documents")
+        response.raise_for_status()
+        result: list[DocumentRecord] = response.json()
+        return result
+
+
+def delete_document(filename: str) -> dict[str, Any]:
+    """
+    Delete a document from the RAG system.
+
+    Args:
+        filename: Filename to delete.
+
+    Returns:
+        API response with deletion details.
+
+    Raises:
+        httpx.HTTPError: On network or API errors.
+    """
+    with httpx.Client(timeout=10.0) as client:
+        response = client.delete(f"{RAG_ENDPOINT}/documents/{filename}")
+        response.raise_for_status()
+        result: dict[str, Any] = response.json()
+        return result
+
+
 def check_api_health() -> bool:
     """Check if the RAG API is reachable."""
     try:
@@ -233,95 +338,149 @@ def check_api_health() -> bool:
 
 
 def render_sidebar() -> None:
-    """Render the sidebar with file upload and status."""
+    """Render the sidebar with file upload, documents list, and settings."""
     with st.sidebar:
-        st.markdown(
-            '<p class="sidebar-header">📁 Document Upload</p>', unsafe_allow_html=True
-        )
-
-        # API Status indicator
+        # --- API Status (subtle) ---
         api_healthy = check_api_health()
         if api_healthy:
-            st.success("✅ API Connected", icon="🟢")
+            st.markdown(
+                '<p style="color: #059669; font-size: 0.9rem;">✓ API Connected</p>',
+                unsafe_allow_html=True,
+            )
         else:
             st.error("❌ API Unreachable", icon="🔴")
             st.caption(f"Endpoint: `{API_URL}`")
             return
 
-        st.divider()
+        # --- Upload Section ---
+        st.markdown(
+            '<p class="sidebar-header">📁 Upload Documents</p>', unsafe_allow_html=True
+        )
 
-        # File uploader
         uploaded_file = st.file_uploader(
-            "Upload PDF or Markdown",
+            "Choose a PDF or Markdown file",
             type=["pdf", "md"],
             help="Supported formats: PDF (.pdf), Markdown (.md)",
+            key="file_uploader",
         )
 
         if uploaded_file is not None:
             file_name = uploaded_file.name
 
-            # Check if already ingested this session
-            if file_name in st.session_state.ingested_files:
-                st.info(f"📄 '{file_name}' already uploaded this session.")
+            if st.button(
+                "🚀 Ingest Document", type="primary", use_container_width=True
+            ):
+                with st.spinner(f"Processing '{file_name}'..."):
+                    try:
+                        result = ingest_file(file_name, uploaded_file.getvalue())
+
+                        if result.get("status") == "duplicate":
+                            st.warning(
+                                f"⚠️ Duplicate: {result.get('message', 'File already exists')}"
+                            )
+                        else:
+                            st.success(f"✅ '{file_name}' queued for processing!")
+                            st.session_state.refresh_documents = True
+
+                    except httpx.HTTPStatusError as e:
+                        if e.response.status_code == 422:
+                            detail = e.response.json().get("detail", "Invalid file")
+                            st.error(f"Validation Error: {detail}")
+                        else:
+                            st.error(f"API Error: {e.response.status_code}")
+                    except httpx.RequestError as e:
+                        st.error(f"Connection Error: {e}")
+
+        # --- Documents List ---
+        st.markdown(
+            '<p class="sidebar-header">📚 Ingested Documents</p>',
+            unsafe_allow_html=True,
+        )
+
+        try:
+            documents = get_documents()
+
+            if documents:
+                for doc in documents:
+                    col1, col2 = st.columns([4, 1])
+
+                    with col1:
+                        st.markdown(
+                            f"""
+                            <div class="document-item">
+                                <span class="document-name" title="{doc["filename"]}">{doc["filename"]}</span>
+                                <span class="document-chunks">{doc["chunks_count"]} chunks</span>
+                            </div>
+                            """,
+                            unsafe_allow_html=True,
+                        )
+
+                    with col2:
+                        if st.button(
+                            "🗑️",
+                            key=f"delete_{doc['document_id']}",
+                            help=f"Delete {doc['filename']}",
+                            use_container_width=True,
+                        ):
+                            try:
+                                delete_document(doc["filename"])
+                                st.success(f"Deleted '{doc['filename']}'")
+                                st.session_state.refresh_documents = True
+                                st.rerun()
+                            except httpx.HTTPStatusError as e:
+                                if e.response.status_code == 404:
+                                    st.error("Document not found")
+                                else:
+                                    st.error(f"Delete failed: {e.response.status_code}")
+                            except httpx.RequestError as e:
+                                st.error(f"Connection error: {e}")
             else:
-                # Ingest button
-                if st.button(
-                    "🚀 Ingest Document", type="primary", use_container_width=True
-                ):
-                    with st.spinner(f"Ingesting '{file_name}'..."):
-                        try:
-                            result = ingest_file(file_name, uploaded_file.getvalue())
+                st.info(
+                    "No documents uploaded yet. Start by uploading a PDF or Markdown file."
+                )
 
-                            if result.get("status") == "duplicate":
-                                st.warning(
-                                    f"⚠️ Duplicate: {result.get('message', 'File already exists')}"
-                                )
-                            else:
-                                st.success(f"✅ '{file_name}' accepted for processing!")
-                                st.session_state.ingested_files.append(file_name)
+        except httpx.RequestError as e:
+            st.warning(f"Could not load documents: {e}")
 
-                        except httpx.HTTPStatusError as e:
-                            if e.response.status_code == 422:
-                                detail = e.response.json().get("detail", "Invalid file")
-                                st.error(f"❌ Validation Error: {detail}")
-                            else:
-                                st.error(f"❌ API Error: {e.response.status_code}")
-                        except httpx.RequestError as e:
-                            st.error(f"❌ Connection Error: {e}")
+        # --- Settings ---
+        st.markdown('<p class="sidebar-header">⚙️ Settings</p>', unsafe_allow_html=True)
 
-        st.divider()
-
-        # Ingested files list
-        if st.session_state.ingested_files:
-            st.markdown("**📚 Uploaded this session:**")
-            for fname in st.session_state.ingested_files:
-                st.caption(f"• {fname}")
-
-        # Settings
-        st.divider()
-        st.markdown("**⚙️ Settings**")
         st.session_state.num_sources = st.slider(
             "Context chunks (k)",
             min_value=1,
             max_value=15,
-            value=5,
+            value=st.session_state.num_sources,
             help="Number of document chunks to retrieve for context",
         )
 
+        # --- Clear Conversation ---
+        if st.button("🔄 Clear Conversation", use_container_width=True):
+            st.session_state.messages = []
+            st.success("Conversation cleared!")
+            st.rerun()
+
 
 def render_sources(sources: list[SourceRef]) -> None:
-    """Render source citations in an expander."""
+    """Render source citations with tooltips for explainability."""
     if not sources:
         return
 
     with st.expander(f"📖 View Sources ({len(sources)} chunks)", expanded=False):
         for _i, source in enumerate(sources, 1):
             score_pct = source["score"] * 100
+
+            # Create the HTML with tooltip
             st.markdown(
                 f"""
                 <div class="source-card">
                     <span class="source-filename">📄 {source["filename"]}</span>
-                    <span class="source-score"> — Chunk #{source["chunk_index"]} • {score_pct:.1f}% relevance</span>
+                    <span class="source-meta">
+                        Chunk #{source["chunk_index"]}
+                        <span class="source-score-container">
+                            • <span class="source-score">{score_pct:.1f}%</span>
+                            <span class="source-score-help" title="Relevance Score: Cosine similarity (0-100%). Indicates how mathematically close the document's meaning is to your question.">ℹ️</span>
+                        </span class="source-score-container">
+                    </span>
                     <p class="source-preview">"{source["preview"]}"</p>
                 </div>
                 """,
@@ -330,7 +489,7 @@ def render_sources(sources: list[SourceRef]) -> None:
 
 
 def render_chat_history() -> None:
-    """Render the chat message history."""
+    """Render the chat message history with improved spacing."""
     for message in st.session_state.messages:
         with st.chat_message(message["role"]):
             # Show mock mode warning for assistant messages
