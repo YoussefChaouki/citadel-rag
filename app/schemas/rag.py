@@ -94,3 +94,21 @@ class AskResponse(BaseModel):
         description="True if LLM was unavailable and response is simulated",
     )
     query: str = Field(description="Original query for reference")
+
+
+class DocumentInfo(BaseModel):
+    """Information about a single document in the RAG system."""
+
+    document_id: str = Field(description="Document UUID as string")
+    filename: str = Field(description="Original filename with extension")
+    chunks_count: int = Field(ge=0, description="Number of chunks in document")
+    created_at: str = Field(description="ISO timestamp of ingestion")
+
+
+class DeleteResponse(BaseModel):
+    """Response from document deletion endpoint."""
+
+    success: bool = Field(description="Whether deletion succeeded")
+    filename: str = Field(description="Filename that was deleted")
+    chunks_deleted: int = Field(description="Number of chunks removed")
+    message: str = Field(description="Human-readable status message")

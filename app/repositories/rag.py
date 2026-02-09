@@ -90,6 +90,51 @@ class RAGRepository:
         )
         return document, True
 
+    async def delete_document_by_filename(
+        self,
+        session: AsyncSession,
+        filename: str,
+    ) -> tuple[bool, int]:
+        """
+        Delete a document and all its chunks by filename.
+
+        Uses cascade delete via foreign key to ensure consistency.
+
+        Args:
+            session: Active async database session.
+            filename: Filename of document to delete.
+
+        Returns:
+            Tuple of (found, chunks_deleted).
+            ``found=True`` if document existed and was deleted,
+            ``chunks_deleted`` = number of chunks that were removed.
+        """
+        # Find the document
+        stmt = select(DocumentRecord).where(DocumentRecord.filename == filename)
+        result = await session.execute(stmt)
+        document = result.scalars().first()
+
+        if document is None:
+            logger.warning("Document not found for deletion: '%s'", filename)
+            return False, 0
+
+        # Count chunks before deletion (for response reporting)
+        chunks_stmt = select(ChunkRecord).where(ChunkRecord.document_id == document.id)
+        chunks_result = await session.execute(chunks_stmt)
+        chunks = chunks_result.scalars().all()
+        chunks_count = len(chunks)
+
+        # Delete document (cascade will remove chunks)
+        await session.delete(document)
+        await session.commit()
+
+        logger.info(
+            "Deleted document '%s' with %d chunks",
+            filename,
+            chunks_count,
+        )
+        return True, chunks_count
+
     # ------------------------------------------------------------------
     # Read operations
     # ------------------------------------------------------------------
@@ -113,6 +158,20 @@ class RAGRepository:
         stmt = select(DocumentRecord).where(DocumentRecord.id == document_id)
         result = await session.execute(stmt)
         return result.scalars().first()
+
+    async def get_all_documents(
+        self,
+        session: AsyncSession,
+    ) -> Sequence[DocumentRecord]:
+        """
+        Get all documents ordered by creation date (newest first).
+
+        Returns:
+            List of all DocumentRecords in the system.
+        """
+        stmt = select(DocumentRecord).order_by(DocumentRecord.created_at.desc())
+        result = await session.execute(stmt)
+        return result.scalars().all()
 
     async def search_similar(
         self,
