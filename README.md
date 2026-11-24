@@ -4,11 +4,11 @@
 
 ![CITADEL Interface](assets/citadel-interface.png)
 
-[![CI Pipeline](https://img.shields.io/badge/CI-passing-brightgreen)]()
-[![Python 3.11+](https://img.shields.io/badge/python-3.11+-blue.svg)]()
-[![Type Checked](https://img.shields.io/badge/mypy-strict-blue)]()
-[![Code Style](https://img.shields.io/badge/code%20style-ruff-black)]()
-[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)]()
+[![CI Pipeline](https://github.com/YoussefChaouki/citadel-rag/actions/workflows/ci.yml/badge.svg)](https://github.com/YoussefChaouki/citadel-rag/actions/workflows/ci.yml)
+[![Python 3.11+](https://img.shields.io/badge/python-3.11+-blue.svg)](https://www.python.org/downloads/)
+[![Type Checked](https://img.shields.io/badge/mypy-strict-blue)](Makefile)
+[![Code Style](https://img.shields.io/badge/code%20style-ruff-black)](https://github.com/astral-sh/ruff)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 
 ---
 
